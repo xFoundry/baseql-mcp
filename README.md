@@ -14,6 +14,7 @@ BaseQL is a service that creates GraphQL APIs for your Airtable bases and Google
   - Sorting
   - Pagination
 - **Full-Text Search**: Search across your data with field-specific or global search
+- **Field Options Discovery**: Analyze existing data to discover single/multi-select field options
 - **Resources**: Access schema information as MCP resources
 
 ## Prerequisites
@@ -162,6 +163,45 @@ Perform full-text search on a table.
 }
 ```
 
+#### 6. `getFieldOptions` - Discover Select Field Options
+Analyze existing data to discover possible values for single-select or multi-select fields. This is useful because BaseQL doesn't expose Airtable's select field options as GraphQL enums.
+
+```json
+{
+  "tableName": "contacts",
+  "fieldName": "type",
+  "sampleSize": 100
+}
+```
+
+**Note:** BaseQL limits queries to 100 records maximum, so the tool analyzes up to 100 records to discover field values.
+
+**Example Response:**
+```json
+{
+  "tableName": "contacts",
+  "fieldName": "type",
+  "sampleSize": 100,
+  "totalUnique": 5,
+  "nullCount": 45,
+  "values": [
+    { "value": "Student", "count": 35 },
+    { "value": "Staff", "count": 9 },
+    { "value": "External", "count": 8 },
+    { "value": "Leadership", "count": 2 },
+    { "value": "Faculty", "count": 1 }
+  ],
+  "isMultiSelect": false,
+  "note": "Values discovered from existing data. Some options may not appear if they are not currently used in any records."
+}
+```
+
+**Use Cases:**
+- Discovering valid options for dropdown fields in forms
+- Understanding data distribution in select fields
+- Validating data before updates
+- Building dynamic UI components based on actual field options
+
 ### Available Resources
 
 - `baseql://schema` - Access the complete GraphQL schema information
@@ -194,6 +234,7 @@ To use this server with an MCP client, add the following to your client configur
 
 ### Pagination
 - Use `_page_size` and `_page` instead of `limit` and `offset`
+- Maximum `_page_size` is 100 records
 - Example: `contacts(_page_size: 10, _page: 2)`
 
 ### Filtering

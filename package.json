@@ -1,6 +1,6 @@
 {
   "name": "baseql-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server for BaseQL - Query Airtable and Google Sheets via GraphQL",
   "main": "dist/index.js",
   "bin": {

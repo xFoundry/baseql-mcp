@@ -8,6 +8,8 @@
 "Get the first 10 purchases sorted by date"
 "Find contacts with email ending in @umd.edu"
 "Show me the schema for the products table"
+"What are the possible values for the status field in the members table?"
+"Show me the options for the type field in contacts"
 ```
 
 ## BaseQL GraphQL Cheat Sheet

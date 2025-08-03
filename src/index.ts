@@ -29,7 +29,7 @@ class BaseQLMCPServer {
     this.server = new Server(
       {
         name: "baseql-mcp",
-        version: "1.0.0",
+        version: "1.1.0",
       },
       {
         capabilities: {
@@ -244,6 +244,28 @@ class BaseQLMCPServer {
                 },
               },
               required: ["tableName", "searchTerm"],
+            },
+          },
+          {
+            name: "getFieldOptions",
+            description: "Discover possible values for single-select or multi-select fields by analyzing existing data. Returns unique values found in the field with occurrence counts. Note: This samples existing data and may not show all possible options if some are unused.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                tableName: {
+                  type: "string",
+                  description: "The name of the table containing the field",
+                },
+                fieldName: {
+                  type: "string",
+                  description: "The name of the field to analyze for unique values",
+                },
+                sampleSize: {
+                  type: "number",
+                  description: "Number of records to sample (default: 100, max: 100 due to BaseQL limitation)",
+                },
+              },
+              required: ["tableName", "fieldName"],
             },
           },
         ],
@@ -499,6 +521,101 @@ class BaseQLMCPServer {
             throw new McpError(
               ErrorCode.InternalError,
               `Failed to search table: ${error instanceof Error ? error.message : "Unknown error"}`
+            );
+          }
+        }
+
+        case "getFieldOptions": {
+          const { tableName, fieldName, sampleSize = 100 } = args as {
+            tableName: string;
+            fieldName: string;
+            sampleSize?: number;
+          };
+
+          try {
+            // BaseQL limits page size to 100
+            const limitedSampleSize = Math.min(sampleSize, 100);
+
+            // Query the table for a sample of records
+            const query = gql`
+              query GetFieldOptions {
+                ${tableName}(_page_size: ${limitedSampleSize}) {
+                  ${fieldName}
+                }
+              }
+            `;
+
+            const data = await this.graphqlClient.request(query) as any;
+            const records = data[tableName];
+
+            if (!records || records.length === 0) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      tableName,
+                      fieldName,
+                      sampleSize: 0,
+                      totalUnique: 0,
+                      values: [],
+                      note: "No records found in table"
+                    }, null, 2),
+                  },
+                ],
+              };
+            }
+
+            // Extract and count unique values
+            const valueCounts = new Map<string, number>();
+            let nullCount = 0;
+
+            for (const record of records) {
+              const value = record[fieldName];
+              
+              if (value === null || value === undefined) {
+                nullCount++;
+              } else if (Array.isArray(value)) {
+                // Handle multi-select fields
+                for (const item of value) {
+                  if (item) {
+                    valueCounts.set(String(item), (valueCounts.get(String(item)) || 0) + 1);
+                  }
+                }
+              } else {
+                // Handle single-select fields
+                valueCounts.set(String(value), (valueCounts.get(String(value)) || 0) + 1);
+              }
+            }
+
+            // Sort by count (descending) and create result array
+            const sortedValues = Array.from(valueCounts.entries())
+              .sort((a, b) => b[1] - a[1])
+              .map(([value, count]) => ({ value, count }));
+
+            const result = {
+              tableName,
+              fieldName,
+              sampleSize: records.length,
+              totalUnique: sortedValues.length,
+              nullCount,
+              values: sortedValues,
+              isMultiSelect: records.some((r: any) => Array.isArray(r[fieldName])),
+              note: "Values discovered from existing data. Some options may not appear if they are not currently used in any records."
+            };
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            };
+          } catch (error) {
+            throw new McpError(
+              ErrorCode.InternalError,
+              `Failed to get field options: ${error instanceof Error ? error.message : "Unknown error"}`
             );
           }
         }
