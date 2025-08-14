@@ -1,0 +1,62 @@
+# Source files
+src/
+tsconfig.json
+*.ts
+
+# Development files
+.env
+.env.*
+node_modules/
+.git/
+.DS_Store
+.idea/
+.vscode/
+
+# Documentation (keep README.md)
+docs/
+*.md
+!README.md
+
+# Build artifacts we don't need
+*.tsbuildinfo
+coverage/
+.nyc_output/
+
+# Test files
+test/
+tests/
+*.test.*
+*.spec.*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Optional npm cache directory
+.npm
+
+# Backup files
+*.backup
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Installation improvement files (keep for reference but don't publish)
+PHASE1_IMPLEMENTATION_SUMMARY.md
+INSTALLATION_IMPROVEMENT_PROMPT.md
+IMPLEMENTATION_EXAMPLES.md
+install.sh
+QUICK_REFERENCE.md
+claude_project.json

@@ -1,29 +1,59 @@
 {
-  "name": "baseql-mcp",
-  "version": "1.1.0",
+  "name": "@baseql/mcp-server",
+  "version": "2.0.0",
   "description": "MCP server for BaseQL - Query Airtable and Google Sheets via GraphQL",
   "main": "dist/index.js",
+  "type": "module",
+  "private": false,
   "bin": {
-    "baseql-mcp": "dist/index.js"
+    "baseql-mcp": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run add-shebang",
+    "add-shebang": "echo '#!/usr/bin/env node' | cat - dist/cli.js > temp && mv temp dist/cli.js && chmod +x dist/cli.js",
     "start": "node dist/index.js",
     "dev": "npm run build && npm run start",
+    "prepublishOnly": "npm run build",
     "test": "echo \"No tests specified\" && exit 0",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "inspector": "npx @modelcontextprotocol/inspector dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/baseql/mcp-server.git"
+  },
+  "keywords": [
+    "mcp",
+    "baseql",
+    "airtable",
+    "google-sheets",
+    "graphql",
+    "model-context-protocol"
+  ],
+  "author": "BaseQL Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.1",
     "axios": "^1.11.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0",
     "dotenv": "^17.2.1",
     "graphql": "^16.11.0",
     "graphql-request": "^7.2.0",
+    "inquirer": "^9.2.15",
+    "ora": "^8.0.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/inquirer": "^9.0.7",
     "@types/node": "^24.1.0",
     "typescript": "^5.5.3"
-  },
-  "private": true
+  }
 }
