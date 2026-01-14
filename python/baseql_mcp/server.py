@@ -82,6 +82,22 @@ def _build_order_by(sort: Optional[List[Dict[str, str]]]) -> Optional[str]:
     return _to_graphql_object(order_map)
 
 
+def _build_selection(selection: Any, indent_level: int = 0) -> str:
+    """Build a GraphQL selection set from lists/dicts/strings."""
+    indent = "    " * indent_level
+    if isinstance(selection, str):
+        return f"{indent}{selection}"
+    if isinstance(selection, list):
+        return "\n".join(_build_selection(item, indent_level) for item in selection)
+    if isinstance(selection, dict):
+        blocks: List[str] = []
+        for key, value in selection.items():
+            nested = _build_selection(value, indent_level + 1)
+            blocks.append(f"{indent}{key} {{\n{nested}\n{indent}}}")
+        return "\n".join(blocks)
+    raise ValueError("selection must be a string, list, or dict")
+
+
 async def listTables() -> Dict[str, Any]:
     """List available tables in the BaseQL schema."""
     query = """
@@ -146,10 +162,15 @@ async def queryTable(
     sort: Optional[List[Dict[str, str]]] = None,
     limit: Optional[int] = None,
     offset: Optional[int] = None,
+    selection: Optional[Any] = None,
+    safeFields: bool = False,
+    validateFields: bool = False,
 ) -> Dict[str, Any]:
     """Query a table with filters, sorting, and pagination."""
     if not tableName:
         raise ValueError("tableName is required")
+    if selection is not None and fields:
+        raise ValueError("Provide either selection or fields, not both")
 
     args: List[str] = []
 
@@ -173,14 +194,41 @@ async def queryTable(
         args.append(f"_page: {page}")
 
     args_str = f"({', '.join(args)})" if args else ""
-    selection = "id\n    __typename"
-    if fields:
-        selection = "\n    ".join(fields)
+    selection_str = "id\n    __typename"
+    if selection is not None:
+        selection_str = _build_selection(selection)
+    elif fields:
+        if safeFields or validateFields:
+            schema_query = """
+            query GetTableFields($name: String!) {
+              __type(name: $name) {
+                fields {
+                  name
+                  type { name kind }
+                }
+              }
+            }
+            """
+            schema = await _graphql_request(schema_query, {"name": tableName})
+            field_defs = schema.get("__type", {}).get("fields", [])
+            allowed_fields = {
+                f["name"]
+                for f in field_defs
+                if f.get("type", {}).get("kind") == "SCALAR" or not safeFields
+            }
+            filtered_fields = [f for f in fields if f in allowed_fields]
+            if not filtered_fields:
+                raise ValueError(
+                    f"No valid fields found in '{tableName}'. "
+                    "Use getTableSchema to list available fields."
+                )
+            fields = filtered_fields
+        selection_str = "\n    ".join(fields)
 
     query = f"""
     query QueryTable {{
       {tableName}{args_str} {{
-        {selection}
+        {selection_str}
       }}
     }}
     """
@@ -193,19 +241,20 @@ async def searchTable(
     searchTerm: str,
     fields: Optional[List[str]] = None,
     limit: int = 10,
+    matchMode: str = "exact",
+    caseInsensitive: bool = False,
 ) -> Dict[str, Any]:
     """Search by exact match across specific string fields."""
     if not tableName:
         raise ValueError("tableName is required")
     if not searchTerm:
         raise ValueError("searchTerm is required")
+    if limit <= 0 or limit > 100:
+        raise ValueError("limit must be between 1 and 100")
 
-    if not fields:
-        raise ValueError(
-            "fields is required for searchTable. "
-            "Use getTableSchema to discover valid string fields, "
-            "then pass those field names explicitly."
-        )
+    mode = (matchMode or "exact").strip().lower()
+    if mode not in ("exact", "contains"):
+        raise ValueError('matchMode must be "exact" or "contains"')
 
     # Discover text fields
     schema_query = """
@@ -228,7 +277,10 @@ async def searchTable(
         and f.get("type", {}).get("name") == "String"
     ]
 
-    fields_to_search = [f for f in fields if f in available_text_fields]
+    if not fields:
+        fields_to_search = available_text_fields
+    else:
+        fields_to_search = [f for f in fields if f in available_text_fields]
     if not fields_to_search:
         raise ValueError(
             f"No valid string fields found in '{tableName}' for search. "
@@ -236,30 +288,91 @@ async def searchTable(
         )
 
     primary_field = fields_to_search[0]
-    filter_obj = {primary_field: searchTerm}
-
-    args = [
-        f"_filter: {_to_graphql_object(filter_obj)}",
-        f"_page_size: {min(limit, 100)}",
-    ]
-    args_str = f"({', '.join(args)})"
-
     result_fields = ["id"] + fields_to_search[:10]
     selection = "\n    ".join(result_fields)
 
-    query = f"""
-    query SearchTable {{
-      {tableName}{args_str} {{
-        {selection}
-      }}
-    }}
-    """
-    data = await _graphql_request(query)
+    if mode != "exact" or caseInsensitive:
+        # Client-side filtering on a limited sample when server-side matching is insufficient.
+        sample_size = min(max(limit * 5, limit), 100)
+        query = f"""
+        query SearchTableSample {{
+          {tableName}(_page_size: {sample_size}) {{
+            {selection}
+          }}
+        }}
+        """
+        data = await _graphql_request(query)
+        records = data.get(tableName, [])
+        needle = searchTerm.lower() if caseInsensitive else searchTerm
+
+        def _matches(value: Any) -> bool:
+            if value is None:
+                return False
+            if isinstance(value, list):
+                return any(_matches(item) for item in value)
+            hay = str(value)
+            hay = hay.lower() if caseInsensitive else hay
+            if mode == "contains":
+                return needle in hay
+            return hay == needle
+
+        matched: Dict[str, Dict[str, Any]] = {}
+        for record in records:
+            for field in fields_to_search:
+                if _matches(record.get(field)):
+                    record_id = record.get("id") or record.get("_id")
+                    if record_id:
+                        matched[record_id] = record
+                    else:
+                        matched[str(record)] = record
+                    break
+
+        results = list(matched.values())[:limit]
+        return {
+            "searchTerm": searchTerm,
+            "fieldsSearched": fields_to_search,
+            "primaryField": primary_field,
+            "matchMode": mode,
+            "caseInsensitive": caseInsensitive,
+            "sampleSize": sample_size,
+            "records": results,
+            "results": {"records": results, "note": "Client-side filtering on a limited sample."},
+        }
+
+    results_by_field: Dict[str, Any] = {}
+    matched_records: Dict[str, Dict[str, Any]] = {}
+    for field in fields_to_search:
+        filter_obj = {field: searchTerm}
+        args = [
+            f"_filter: {_to_graphql_object(filter_obj)}",
+            f"_page_size: {min(limit, 100)}",
+        ]
+        args_str = f"({', '.join(args)})"
+        query = f"""
+        query SearchTable {{
+          {tableName}{args_str} {{
+            {selection}
+          }}
+        }}
+        """
+        data = await _graphql_request(query)
+        results_by_field[field] = data
+        for record in data.get(tableName, []):
+            record_id = record.get("id") or record.get("_id")
+            if record_id:
+                matched_records[record_id] = record
+            else:
+                matched_records[str(record)] = record
+
+    records = list(matched_records.values())[:limit]
     return {
         "searchTerm": searchTerm,
         "fieldsSearched": fields_to_search,
         "primaryField": primary_field,
-        "results": data,
+        "matchMode": mode,
+        "caseInsensitive": caseInsensitive,
+        "records": records,
+        "results": results_by_field if len(fields_to_search) > 1 else results_by_field.get(primary_field, {}),
     }
 
 
