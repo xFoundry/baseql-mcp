@@ -48,7 +48,7 @@ That's it! The setup wizard will:
 - Env vars: `BASEQL_API_ENDPOINT`, `BASEQL_API_KEY` (Bearer-prefixed), optional `MCP_HOST`, `MCP_PORT` (default 8080), `MCP_TRANSPORT` (`http`/`sse`/`stdio`), `MCP_PATH` (default `/mcp`).
 - Optional auth: set `FASTMCP_API_KEY` (or `MCP_API_KEY`) to require `Authorization: Bearer <token>` on requests.
 - Deploy on Railway with the included `Dockerfile`/`Procfile`; expose `8080` and point clients to `https://<host>/mcp`.
-- Minimal LLM flow: `listTables` → `getTableSchema` → `queryTable` (use `searchTable` only with explicit fields).
+- Minimal LLM flow: `listTables` → `getTableSchema` → `queryTable` (use `searchTable` for exact, case-sensitive string matches).
 
 ### Option 1: NPX (No Installation Required)
 ```bash
@@ -267,13 +267,14 @@ The BaseQL MCP provides 6 specialized tools that LLMs automatically select based
 ```
 
 **Key Points:**
-- ✅ Exact matches only: `{"email": "user@umd.edu"}`
+- ✅ BaseQL `_filter` supports operators like `_eq`, `_in`, `_and`, `_or`
+- ✅ Exact matches are case-sensitive: `{"email": {"_eq": "user@umd.edu"}}`
 - ✅ Sort directions: `"asc"` or `"desc"` (lowercase)
 - ✅ Linked records: `{"team": ["recXYZ123"]}`
 - ✅ Max limit: 100 records
 
 ### 4. `searchTable` - Find Records by Text
-Search for records containing specific text in fields.
+Search for records by exact, case-sensitive matches on specific string fields.
 
 **Example:**
 ```json
@@ -285,7 +286,8 @@ Search for records containing specific text in fields.
 }
 ```
 
-**Important:** This filters specific fields, not full-text search. Use `queryTable` for exact matches.
+**Important:** This is not full-text search. Case-insensitive or partial matching
+requires client-side sampling and may miss records beyond the sample size.
 
 ### 5. `getFieldOptions` - Discover Dropdown Values
 **Perfect** for understanding what values are used in select/dropdown fields.

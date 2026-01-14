@@ -166,7 +166,11 @@ async def queryTable(
     safeFields: bool = False,
     validateFields: bool = False,
 ) -> Dict[str, Any]:
-    """Query a table with filters, sorting, and pagination."""
+    """Query a table with filters, sorting, and pagination.
+
+    filter is passed directly to BaseQL _filter (supports _eq/_in/_and/_or/etc).
+    Exact matches are case-sensitive unless you use advanced operators.
+    """
     if not tableName:
         raise ValueError("tableName is required")
     if selection is not None and fields:
@@ -244,7 +248,12 @@ async def searchTable(
     matchMode: str = "exact",
     caseInsensitive: bool = True,
 ) -> Dict[str, Any]:
-    """Search by match across specific string fields (case-insensitive by default)."""
+    """Search by match across specific string fields.
+
+    Exact matching is case-sensitive on the BaseQL side. When caseInsensitive=True
+    or matchMode="contains", the tool uses client-side matching on a limited
+    sample (may miss matches beyond the sample size).
+    """
     if not tableName:
         raise ValueError("tableName is required")
     if not searchTerm:

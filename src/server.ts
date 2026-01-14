@@ -190,7 +190,7 @@ export class BaseQLMCPServer {
           },
           {
             name: "queryTable",
-            description: "Query data from a table with advanced filtering, sorting, and pagination. Use this for most data retrieval needs. More user-friendly than raw GraphQL queries. Supports exact matches only (no partial matching - use searchTable for that).",
+            description: "Query data from a table with filtering, sorting, and pagination. Use this for most data retrieval needs. filter is passed directly to BaseQL _filter (supports operators like _eq, _in, _and, _or). Exact matches are case-sensitive unless you use advanced operators in _filter.",
             inputSchema: {
               type: "object",
               properties: {
@@ -207,7 +207,7 @@ export class BaseQLMCPServer {
                 },
                 filter: {
                   type: "object",
-                  description: "Filter conditions as key-value pairs, e.g., {\"type\": \"Student\", \"email\": \"user@umd.edu\"}. Only exact matches supported. For linked records, filter by ID: {\"purchaser\": [\"rec123xyz\"]}.",
+                  description: "BaseQL _filter object. Exact matches are case-sensitive, e.g., {\"type\": {\"_eq\": \"Student\"}}. Supports _and/_or and _eq/_ne/_in/_nin/_gt/_gte/_lt/_lte. For linked records, filter by ID: {\"purchaser\": [\"rec123xyz\"]}.",
                 },
                 sort: {
                   type: "array",
@@ -242,7 +242,7 @@ export class BaseQLMCPServer {
           },
           {
             name: "searchTable",
-            description: "Search for records in a table by filtering specific fields. Use this to find records containing a search term. Note: BaseQL doesn't support full-text search, so this filters specified fields or common text fields (firstName, lastName, email, name). For exact matches, use queryTable with filters instead.",
+            description: "Search for records by exact, case-sensitive matches on string fields. This is not full-text search; it filters specific fields (use fields to control which). If you need case-insensitive or partial matching, BaseQL does not support it directly.",
             inputSchema: {
               type: "object",
               properties: {
@@ -252,14 +252,14 @@ export class BaseQLMCPServer {
                 },
                 searchTerm: {
                   type: "string",
-                  description: "The search term to look for in the specified fields",
+                  description: "Case-sensitive search term to match exactly",
                 },
                 fields: {
                   type: "array",
                   items: {
                     type: "string",
                   },
-                  description: "Specific fields to search in (required). If not provided, searches common fields: firstName, lastName, email, name",
+                  description: "Specific string fields to search. If omitted, the tool uses common string fields that exist in the table.",
                 },
                 limit: {
                   type: "number",

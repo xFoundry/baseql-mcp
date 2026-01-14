@@ -85,8 +85,9 @@ verified.
 
 1) `listTables` to discover entities.
 2) `getTableSchema` for the table you care about.
-3) `queryTable` for exact filters and pagination.
-4) `searchTable` only when you pass explicit string fields.
+3) `queryTable` for BaseQL `_filter` (exact matches are case-sensitive).
+4) `searchTable` for exact, case-sensitive string matches; case-insensitive or
+   contains matching uses client-side sampling and can miss results.
 
 The Python server mirrors the TypeScript toolset:
 - `listTables`
