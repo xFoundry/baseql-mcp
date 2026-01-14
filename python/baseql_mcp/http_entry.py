@@ -1,6 +1,6 @@
 import os
 
-from baseql_mcp.server import mcp  # noqa: F401
+from baseql_mcp.server import create_fastmcp_server
 
 
 def main() -> None:
@@ -10,6 +10,7 @@ def main() -> None:
     path = os.getenv("MCP_PATH", "/mcp")
 
     # FastMCP supports stdio, http, sse; HTTP is recommended for hosted use.
+    mcp = create_fastmcp_server()
     mcp.run(transport=transport, host=host, port=port, path=path)
 
 

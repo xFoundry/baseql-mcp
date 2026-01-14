@@ -5,24 +5,6 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-try:
-    # Optional dependency; install via: pip install "baseql-mcp[fastmcp]"
-    from fastmcp import FastMCP
-except ImportError as exc:  # pragma: no cover - informative failure path
-    raise ImportError(
-        "fastmcp is required to run the Python BaseQL MCP server. "
-        'Install with: pip install "baseql-mcp[fastmcp]" or pip install fastmcp'
-    ) from exc
-
-mcp = FastMCP(
-    "BaseQL MCP (Python)",
-    description=(
-        "Python implementation of the BaseQL MCP server. "
-        "Expose BaseQL GraphQL endpoints to MCP clients (stdio/http/sse) "
-        "with parity to the TypeScript tools."
-    ),
-)
-
 _GRAPHQL_KEY_RE = re.compile(r'"([A-Za-z0-9_]+)":')
 _DEFAULT_SEARCH_FIELDS = [
     "firstName",
@@ -78,7 +60,7 @@ async def _graphql_request(query: str, variables: Optional[Dict[str, Any]] = Non
 def _to_graphql_object(value: Dict[str, Any]) -> str:
     # Convert JSON object string to GraphQL format by unquoting keys.
     raw = json.dumps(value, ensure_ascii=False)
-    return _GRAPHQL_KEY_RE.sub(r"\\1:", raw)
+    return _GRAPHQL_KEY_RE.sub(r"\1:", raw)
 
 
 def _build_order_by(sort: Optional[List[Dict[str, str]]]) -> Optional[str]:
@@ -100,7 +82,6 @@ def _build_order_by(sort: Optional[List[Dict[str, str]]]) -> Optional[str]:
     return _to_graphql_object(order_map)
 
 
-@mcp.tool()
 async def listTables() -> Dict[str, Any]:
     """
     List available BaseQL tables (object types) excluding system/query types.
@@ -131,7 +112,6 @@ async def listTables() -> Dict[str, Any]:
     return {"tables": tables}
 
 
-@mcp.tool()
 async def getTableSchema(tableName: str) -> Dict[str, Any]:
     """
     Return schema details for a table (field names, descriptions, types).
@@ -163,7 +143,6 @@ async def getTableSchema(tableName: str) -> Dict[str, Any]:
     return data
 
 
-@mcp.tool()
 async def queryTable(
     tableName: str,
     fields: Optional[List[str]] = None,
@@ -200,9 +179,9 @@ async def queryTable(
         args.append(f"_page: {page}")
 
     args_str = f"({', '.join(args)})" if args else ""
-    selection = "id\\n    __typename"
+    selection = "id\n    __typename"
     if fields:
-        selection = "\\n    ".join(fields)
+        selection = "\n    ".join(fields)
 
     query = f"""
     query QueryTable {{
@@ -215,7 +194,6 @@ async def queryTable(
     return data
 
 
-@mcp.tool()
 async def searchTable(
     tableName: str,
     searchTerm: str,
@@ -269,7 +247,7 @@ async def searchTable(
     args_str = f"({', '.join(args)})"
 
     result_fields = ["id"] + fields_to_search[:10]
-    selection = "\\n    ".join(result_fields)
+    selection = "\n    ".join(result_fields)
 
     query = f"""
     query SearchTable {{
@@ -287,7 +265,6 @@ async def searchTable(
     }
 
 
-@mcp.tool()
 async def getFieldOptions(
     tableName: str,
     fieldName: str,
@@ -349,7 +326,6 @@ async def getFieldOptions(
     }
 
 
-@mcp.tool()
 async def query(query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Execute a raw GraphQL query against the BaseQL endpoint.
@@ -358,4 +334,43 @@ async def query(query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[
         raise ValueError("query is required")
     data = await _graphql_request(query, variables)
     return data
+
+
+def register_tools(mcp: Any) -> Any:
+    """
+    Register BaseQL tools on an existing FastMCP server instance.
+
+    Usage:
+        from fastmcp import FastMCP
+        from baseql_mcp.server import register_tools
+
+        mcp = FastMCP("BaseQL MCP")
+        register_tools(mcp)
+    """
+
+    mcp.tool()(listTables)
+    mcp.tool()(getTableSchema)
+    mcp.tool()(queryTable)
+    mcp.tool()(searchTable)
+    mcp.tool()(getFieldOptions)
+    mcp.tool()(query)
+    return mcp
+
+
+def create_fastmcp_server(name: str = "BaseQL MCP (Python)") -> Any:
+    """
+    Convenience factory for FastMCP users.
+
+    Requires: pip install "baseql-mcp[fastmcp]"
+    """
+    try:
+        from fastmcp import FastMCP
+    except ImportError as exc:  # pragma: no cover - informative failure path
+        raise ImportError(
+            "fastmcp is required to create a FastMCP server. "
+            'Install with: pip install "baseql-mcp[fastmcp]" or pip install fastmcp'
+        ) from exc
+
+    mcp = FastMCP(name)
+    return register_tools(mcp)
 

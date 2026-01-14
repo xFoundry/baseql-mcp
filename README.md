@@ -42,11 +42,9 @@ That's it! The setup wizard will:
 
 ## 📦 Installation Options
 
-### Python / FastMCP (Railway-friendly)
-- See `docs/fastmcp-python.md` for the Python implementation using the MCP Python SDK + FastMCP.
-- Run locally: `cd python && pip install -r requirements.txt && python -m baseql_mcp.http_entry`
-- Env vars: `BASEQL_API_ENDPOINT`, `BASEQL_API_KEY` (Bearer-prefixed), optional `MCP_HOST`, `MCP_PORT` (default 8080), `MCP_TRANSPORT` (`http`/`sse`/`stdio`), `MCP_PATH` (default `/mcp`).
-- Deploy on Railway with the included `Dockerfile`/`Procfile`; expose `8080` and point clients to `https://<host>/mcp`.
+### Python / FastMCP (Module Only)
+- See `docs/fastmcp-python.md` for how to mount these tools in a separate FastMCP server repo.
+- This repo provides a Python tool module; deployment is handled in your FastMCP host repo.
 
 ### Option 1: NPX (No Installation Required)
 ```bash
