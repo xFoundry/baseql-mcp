@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baseql-mcp"
+version = "0.1.0"
+description = "BaseQL MCP server (Python) for FastMCP / Model Context Protocol"
+authors = [{ name = "BaseQL Team" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+]
+fastmcp = [
+  "fastmcp>=2.14.3",
+]
+
+[project.scripts]
+baseql-mcp-http = "baseql_mcp.http_entry:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+

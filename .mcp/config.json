@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "baseql": {
+      "command": "node",
+      "args": ["./dist/index.js"],
+      "env": {
+        "BASEQL_API_ENDPOINT": "https://api.baseql.com/airtable/graphql/appiD7gplQcnVpXgm",
+        "BASEQL_API_KEY": "MjQ2NzE4NGYtMWE0NC00NTc0LWE3MmEtYzkwNTE3NGE0OThk"
+      }
+    }
+  }
+}

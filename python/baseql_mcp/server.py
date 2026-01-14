@@ -1,0 +1,361 @@
+import json
+import os
+import re
+from typing import Any, Dict, List, Optional
+
+import httpx
+
+try:
+    # Optional dependency; install via: pip install "baseql-mcp[fastmcp]"
+    from fastmcp import FastMCP
+except ImportError as exc:  # pragma: no cover - informative failure path
+    raise ImportError(
+        "fastmcp is required to run the Python BaseQL MCP server. "
+        'Install with: pip install "baseql-mcp[fastmcp]" or pip install fastmcp'
+    ) from exc
+
+mcp = FastMCP(
+    "BaseQL MCP (Python)",
+    description=(
+        "Python implementation of the BaseQL MCP server. "
+        "Expose BaseQL GraphQL endpoints to MCP clients (stdio/http/sse) "
+        "with parity to the TypeScript tools."
+    ),
+)
+
+_GRAPHQL_KEY_RE = re.compile(r'"([A-Za-z0-9_]+)":')
+_DEFAULT_SEARCH_FIELDS = [
+    "firstName",
+    "lastName",
+    "fullName",
+    "email",
+    "name",
+    "title",
+]
+
+
+def _get_config() -> tuple[str, str]:
+    endpoint = os.getenv("BASEQL_API_ENDPOINT", "").strip()
+    api_key = os.getenv("BASEQL_API_KEY", "").strip()
+
+    if not endpoint or not api_key:
+        raise RuntimeError(
+            "BASEQL_API_ENDPOINT and BASEQL_API_KEY must be set "
+            "to use the BaseQL MCP server."
+        )
+
+    if not api_key.startswith("Bearer "):
+        api_key = f"Bearer {api_key}"
+
+    return endpoint, api_key
+
+
+async def _graphql_request(query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    endpoint, api_key = _get_config()
+    payload: Dict[str, Any] = {"query": query}
+    if variables:
+        payload["variables"] = variables
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(
+            endpoint,
+            json=payload,
+            headers={
+                "Authorization": api_key,
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+        body = response.json()
+
+    if "errors" in body and body["errors"]:
+        message = body["errors"][0].get("message", "GraphQL error")
+        raise RuntimeError(message)
+
+    return body.get("data", {})
+
+
+def _to_graphql_object(value: Dict[str, Any]) -> str:
+    # Convert JSON object string to GraphQL format by unquoting keys.
+    raw = json.dumps(value, ensure_ascii=False)
+    return _GRAPHQL_KEY_RE.sub(r"\\1:", raw)
+
+
+def _build_order_by(sort: Optional[List[Dict[str, str]]]) -> Optional[str]:
+    if not sort:
+        return None
+
+    order_map: Dict[str, str] = {}
+    for item in sort:
+        field = item.get("field")
+        if not field:
+            continue
+        direction = item.get("direction", "asc").lower()
+        if direction not in ("asc", "desc"):
+            raise ValueError('Sort direction must be "asc" or "desc"')
+        order_map[field] = direction
+
+    if not order_map:
+        return None
+    return _to_graphql_object(order_map)
+
+
+@mcp.tool()
+async def listTables() -> Dict[str, Any]:
+    """
+    List available BaseQL tables (object types) excluding system/query types.
+    """
+    query = """
+    query ListTables {
+      __schema {
+        types {
+          name
+          kind
+          description
+        }
+      }
+    }
+    """
+    data = await _graphql_request(query)
+    types = data.get("__schema", {}).get("types", [])
+    tables = [
+        {
+            "name": t["name"],
+            "description": t.get("description") or "No description available",
+        }
+        for t in types
+        if t.get("kind") == "OBJECT"
+        and not t.get("name", "").startswith("__")
+        and t.get("name") not in {"Query", "Mutation", "Subscription"}
+    ]
+    return {"tables": tables}
+
+
+@mcp.tool()
+async def getTableSchema(tableName: str) -> Dict[str, Any]:
+    """
+    Return schema details for a table (field names, descriptions, types).
+    """
+    if not tableName:
+        raise ValueError("tableName is required")
+
+    query = """
+    query GetTableSchema($name: String!) {
+      __type(name: $name) {
+        name
+        description
+        fields {
+          name
+          description
+          type {
+            name
+            kind
+            ofType {
+              name
+              kind
+            }
+          }
+        }
+      }
+    }
+    """
+    data = await _graphql_request(query, {"name": tableName})
+    return data
+
+
+@mcp.tool()
+async def queryTable(
+    tableName: str,
+    fields: Optional[List[str]] = None,
+    filter: Optional[Dict[str, Any]] = None,
+    sort: Optional[List[Dict[str, str]]] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Query a table with filtering, sorting, and pagination.
+    """
+    if not tableName:
+        raise ValueError("tableName is required")
+
+    args: List[str] = []
+
+    if filter:
+        args.append(f"_filter: {_to_graphql_object(filter)}")
+
+    order_by = _build_order_by(sort)
+    if order_by:
+        args.append(f"_order_by: {order_by}")
+
+    if limit is not None:
+        if limit <= 0 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+        args.append(f"_page_size: {limit}")
+
+    if offset is not None:
+        if offset < 0:
+            raise ValueError("offset must be 0 or positive")
+        page_size = limit if limit is not None else 100
+        page = (offset // page_size) + 1
+        args.append(f"_page: {page}")
+
+    args_str = f"({', '.join(args)})" if args else ""
+    selection = "id\\n    __typename"
+    if fields:
+        selection = "\\n    ".join(fields)
+
+    query = f"""
+    query QueryTable {{
+      {tableName}{args_str} {{
+        {selection}
+      }}
+    }}
+    """
+    data = await _graphql_request(query)
+    return data
+
+
+@mcp.tool()
+async def searchTable(
+    tableName: str,
+    searchTerm: str,
+    fields: Optional[List[str]] = None,
+    limit: int = 10,
+) -> Dict[str, Any]:
+    """
+    Search for records by matching a text field. BaseQL supports exact matches.
+    """
+    if not tableName:
+        raise ValueError("tableName is required")
+    if not searchTerm:
+        raise ValueError("searchTerm is required")
+
+    # Discover text fields
+    schema_query = """
+    query GetTableFields($name: String!) {
+      __type(name: $name) {
+        fields {
+          name
+          type { name kind }
+        }
+      }
+    }
+    """
+    schema = await _graphql_request(schema_query, {"name": tableName})
+    field_defs = schema.get("__type", {}).get("fields", [])
+
+    available_text_fields = [
+        f["name"]
+        for f in field_defs
+        if f.get("type", {}).get("kind") == "SCALAR"
+        and f.get("type", {}).get("name") == "String"
+    ]
+
+    if fields:
+        fields_to_search = [f for f in fields if f in available_text_fields]
+    else:
+        fields_to_search = [f for f in _DEFAULT_SEARCH_FIELDS if f in available_text_fields]
+
+    if not fields_to_search:
+        raise ValueError(f"No searchable text fields found in '{tableName}'")
+
+    primary_field = fields_to_search[0]
+    filter_obj = {primary_field: searchTerm}
+
+    args = [
+        f"_filter: {_to_graphql_object(filter_obj)}",
+        f"_page_size: {min(limit, 100)}",
+    ]
+    args_str = f"({', '.join(args)})"
+
+    result_fields = ["id"] + fields_to_search[:10]
+    selection = "\\n    ".join(result_fields)
+
+    query = f"""
+    query SearchTable {{
+      {tableName}{args_str} {{
+        {selection}
+      }}
+    }}
+    """
+    data = await _graphql_request(query)
+    return {
+        "searchTerm": searchTerm,
+        "fieldsSearched": fields_to_search,
+        "primaryField": primary_field,
+        "results": data,
+    }
+
+
+@mcp.tool()
+async def getFieldOptions(
+    tableName: str,
+    fieldName: str,
+    sampleSize: int = 100,
+) -> Dict[str, Any]:
+    """
+    Discover select/dropdown values by sampling records in a field.
+    """
+    if not tableName:
+        raise ValueError("tableName is required")
+    if not fieldName:
+        raise ValueError("fieldName is required")
+    if sampleSize <= 0 or sampleSize > 100:
+        raise ValueError("sampleSize must be between 1 and 100")
+
+    query = f"""
+    query GetFieldOptions {{
+      {tableName}(_page_size: {sampleSize}) {{
+        {fieldName}
+      }}
+    }}
+    """
+    data = await _graphql_request(query)
+    records = data.get(tableName, [])
+
+    counts: Dict[str, int] = {}
+    null_count = 0
+
+    for record in records:
+        value = record.get(fieldName)
+        if value is None:
+            null_count += 1
+            continue
+
+        if isinstance(value, list):
+            for item in value:
+                if item is None:
+                    null_count += 1
+                    continue
+                key = str(item)
+                counts[key] = counts.get(key, 0) + 1
+        else:
+            key = str(value)
+            counts[key] = counts.get(key, 0) + 1
+
+    values = [
+        {"value": v, "count": counts[v]}
+        for v in sorted(counts, key=counts.get, reverse=True)
+    ]
+
+    return {
+        "tableName": tableName,
+        "fieldName": fieldName,
+        "sampleSize": len(records),
+        "nullCount": null_count,
+        "values": values,
+        "isMultiSelect": any(isinstance(r.get(fieldName), list) for r in records),
+        "note": "Values discovered from existing data; unused options will not appear.",
+    }
+
+
+@mcp.tool()
+async def query(query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Execute a raw GraphQL query against the BaseQL endpoint.
+    """
+    if not query:
+        raise ValueError("query is required")
+    data = await _graphql_request(query, variables)
+    return data
+
