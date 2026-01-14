@@ -238,13 +238,13 @@ async def queryTable(
 
 async def searchTable(
     tableName: str,
-    searchTerm: str,
+    searchTerm: Any,
     fields: Optional[List[str]] = None,
     limit: int = 10,
     matchMode: str = "exact",
-    caseInsensitive: bool = False,
+    caseInsensitive: bool = True,
 ) -> Dict[str, Any]:
-    """Search by exact match across specific string fields."""
+    """Search by match across specific string fields (case-insensitive by default)."""
     if not tableName:
         raise ValueError("tableName is required")
     if not searchTerm:
@@ -253,8 +253,8 @@ async def searchTable(
         raise ValueError("limit must be between 1 and 100")
 
     mode = (matchMode or "exact").strip().lower()
-    if mode not in ("exact", "contains"):
-        raise ValueError('matchMode must be "exact" or "contains"')
+    if mode not in ("exact", "contains", "in", "nin"):
+        raise ValueError('matchMode must be "exact", "contains", "in", or "nin"')
 
     # Discover text fields
     schema_query = """
@@ -270,29 +270,46 @@ async def searchTable(
     schema = await _graphql_request(schema_query, {"name": tableName})
     field_defs = schema.get("__type", {}).get("fields", [])
 
-    available_text_fields = [
-        f["name"]
-        for f in field_defs
-        if f.get("type", {}).get("kind") == "SCALAR"
-        and f.get("type", {}).get("name") == "String"
-    ]
+    available_text_fields = []
+    available_text_list_fields = []
+    for field in field_defs:
+        field_type = field.get("type", {})
+        if field_type.get("kind") == "SCALAR" and field_type.get("name") == "String":
+            available_text_fields.append(field["name"])
+        elif (
+            field_type.get("kind") == "LIST"
+            and field_type.get("ofType", {}).get("name") == "String"
+        ):
+            available_text_list_fields.append(field["name"])
 
     if not fields:
-        fields_to_search = available_text_fields
+        fields_to_search = available_text_fields + available_text_list_fields
     else:
-        fields_to_search = [f for f in fields if f in available_text_fields]
+        fields_to_search = [
+            f for f in fields if f in available_text_fields or f in available_text_list_fields
+        ]
     if not fields_to_search:
         raise ValueError(
             f"No valid string fields found in '{tableName}' for search. "
             "Use getTableSchema to list available fields."
         )
 
+    if mode in ("in", "nin"):
+        if not isinstance(searchTerm, (list, tuple, set)):
+            raise ValueError('searchTerm must be a list when matchMode is "in" or "nin"')
+        terms = [str(term) for term in searchTerm]
+        if not terms:
+            raise ValueError('searchTerm must contain at least one value')
+    else:
+        terms = [str(searchTerm)]
+
     primary_field = fields_to_search[0]
     result_fields = ["id"] + fields_to_search[:10]
     selection = "\n    ".join(result_fields)
 
-    if mode != "exact" or caseInsensitive:
-        # Client-side filtering on a limited sample when server-side matching is insufficient.
+    # BaseQL server-side filters are case-sensitive; fall back to client-side matching
+    # when case-insensitive or contains behavior is requested.
+    if caseInsensitive or mode == "contains":
         sample_size = min(max(limit * 5, limit), 100)
         query = f"""
         query SearchTableSample {{
@@ -303,7 +320,7 @@ async def searchTable(
         """
         data = await _graphql_request(query)
         records = data.get(tableName, [])
-        needle = searchTerm.lower() if caseInsensitive else searchTerm
+        needles = [term.lower() for term in terms] if caseInsensitive else terms
 
         def _matches(value: Any) -> bool:
             if value is None:
@@ -313,8 +330,12 @@ async def searchTable(
             hay = str(value)
             hay = hay.lower() if caseInsensitive else hay
             if mode == "contains":
-                return needle in hay
-            return hay == needle
+                return any(needle in hay for needle in needles)
+            if mode == "in":
+                return hay in needles
+            if mode == "nin":
+                return hay not in needles
+            return hay == needles[0]
 
         matched: Dict[str, Dict[str, Any]] = {}
         for record in records:
@@ -339,40 +360,44 @@ async def searchTable(
             "results": {"records": results, "note": "Client-side filtering on a limited sample."},
         }
 
-    results_by_field: Dict[str, Any] = {}
-    matched_records: Dict[str, Dict[str, Any]] = {}
-    for field in fields_to_search:
-        filter_obj = {field: searchTerm}
-        args = [
-            f"_filter: {_to_graphql_object(filter_obj)}",
-            f"_page_size: {min(limit, 100)}",
-        ]
-        args_str = f"({', '.join(args)})"
-        query = f"""
-        query SearchTable {{
-          {tableName}{args_str} {{
-            {selection}
-          }}
-        }}
-        """
-        data = await _graphql_request(query)
-        results_by_field[field] = data
-        for record in data.get(tableName, []):
-            record_id = record.get("id") or record.get("_id")
-            if record_id:
-                matched_records[record_id] = record
-            else:
-                matched_records[str(record)] = record
+    server_fields = [f for f in fields_to_search if f in available_text_fields]
+    if not server_fields:
+        raise ValueError(
+            f"No valid string fields found in '{tableName}' for server-side search. "
+            "Use getTableSchema to list available fields."
+        )
 
-    records = list(matched_records.values())[:limit]
+    if mode == "exact":
+        op_key = "_eq"
+    elif mode == "in":
+        op_key = "_in"
+    else:
+        op_key = "_nin"
+
+    or_filters = [{field: {op_key: terms if mode in ("in", "nin") else terms[0]}} for field in server_fields]
+    filter_obj = {"_or": or_filters} if len(or_filters) > 1 else or_filters[0]
+    args = [
+        f"_filter: {_to_graphql_object(filter_obj)}",
+        f"_page_size: {min(limit, 100)}",
+    ]
+    args_str = f"({', '.join(args)})"
+    query = f"""
+    query SearchTable {{
+      {tableName}{args_str} {{
+        {selection}
+      }}
+    }}
+    """
+    data = await _graphql_request(query)
+    records = data.get(tableName, [])
     return {
         "searchTerm": searchTerm,
-        "fieldsSearched": fields_to_search,
+        "fieldsSearched": server_fields,
         "primaryField": primary_field,
         "matchMode": mode,
         "caseInsensitive": caseInsensitive,
-        "records": records,
-        "results": results_by_field if len(fields_to_search) > 1 else results_by_field.get(primary_field, {}),
+        "records": records[:limit],
+        "results": data,
     }
 
 
