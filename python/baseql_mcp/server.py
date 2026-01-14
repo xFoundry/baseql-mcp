@@ -83,9 +83,7 @@ def _build_order_by(sort: Optional[List[Dict[str, str]]]) -> Optional[str]:
 
 
 async def listTables() -> Dict[str, Any]:
-    """
-    List available BaseQL tables (object types) excluding system/query types.
-    """
+    """List available tables in the BaseQL schema."""
     query = """
     query ListTables {
       __schema {
@@ -113,9 +111,7 @@ async def listTables() -> Dict[str, Any]:
 
 
 async def getTableSchema(tableName: str) -> Dict[str, Any]:
-    """
-    Return schema details for a table (field names, descriptions, types).
-    """
+    """Return field names and types for a table."""
     if not tableName:
         raise ValueError("tableName is required")
 
@@ -151,9 +147,7 @@ async def queryTable(
     limit: Optional[int] = None,
     offset: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """
-    Query a table with filtering, sorting, and pagination.
-    """
+    """Query a table with filters, sorting, and pagination."""
     if not tableName:
         raise ValueError("tableName is required")
 
@@ -200,13 +194,18 @@ async def searchTable(
     fields: Optional[List[str]] = None,
     limit: int = 10,
 ) -> Dict[str, Any]:
-    """
-    Search for records by matching a text field. BaseQL supports exact matches.
-    """
+    """Search by exact match across specific string fields."""
     if not tableName:
         raise ValueError("tableName is required")
     if not searchTerm:
         raise ValueError("searchTerm is required")
+
+    if not fields:
+        raise ValueError(
+            "fields is required for searchTable. "
+            "Use getTableSchema to discover valid string fields, "
+            "then pass those field names explicitly."
+        )
 
     # Discover text fields
     schema_query = """
@@ -229,13 +228,12 @@ async def searchTable(
         and f.get("type", {}).get("name") == "String"
     ]
 
-    if fields:
-        fields_to_search = [f for f in fields if f in available_text_fields]
-    else:
-        fields_to_search = [f for f in _DEFAULT_SEARCH_FIELDS if f in available_text_fields]
-
+    fields_to_search = [f for f in fields if f in available_text_fields]
     if not fields_to_search:
-        raise ValueError(f"No searchable text fields found in '{tableName}'")
+        raise ValueError(
+            f"No valid string fields found in '{tableName}' for search. "
+            "Use getTableSchema to list available fields."
+        )
 
     primary_field = fields_to_search[0]
     filter_obj = {primary_field: searchTerm}
@@ -270,9 +268,7 @@ async def getFieldOptions(
     fieldName: str,
     sampleSize: int = 100,
 ) -> Dict[str, Any]:
-    """
-    Discover select/dropdown values by sampling records in a field.
-    """
+    """Return observed values for a field (from a sample)."""
     if not tableName:
         raise ValueError("tableName is required")
     if not fieldName:
@@ -327,9 +323,7 @@ async def getFieldOptions(
 
 
 async def query(query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    Execute a raw GraphQL query against the BaseQL endpoint.
-    """
+    """Execute a raw GraphQL query."""
     if not query:
         raise ValueError("query is required")
     data = await _graphql_request(query, variables)
@@ -365,12 +359,26 @@ def create_fastmcp_server(name: str = "BaseQL MCP (Python)") -> Any:
     """
     try:
         from fastmcp import FastMCP
+        from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
     except ImportError as exc:  # pragma: no cover - informative failure path
         raise ImportError(
             "fastmcp is required to create a FastMCP server. "
             'Install with: pip install "baseql-mcp[fastmcp]" or pip install fastmcp'
         ) from exc
 
-    mcp = FastMCP(name)
+    api_key = os.getenv("FASTMCP_API_KEY") or os.getenv("MCP_API_KEY")
+    if api_key:
+        verifier = StaticTokenVerifier(
+            tokens={
+                api_key: {
+                    "client_id": "baseql-api-key",
+                    "scopes": ["baseql:access"],
+                }
+            },
+            required_scopes=["baseql:access"],
+        )
+        mcp = FastMCP(name, auth=verifier)
+    else:
+        mcp = FastMCP(name)
     return register_tools(mcp)
 

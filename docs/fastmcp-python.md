@@ -20,6 +20,8 @@ Environment overrides:
 - `MCP_PORT` (default `8080`)
 - `MCP_TRANSPORT` (`http`, `sse`, `stdio`; default `http`)
 - `MCP_PATH` (default `/mcp`)
+- Optional auth:
+  - `FASTMCP_API_KEY` (preferred) or `MCP_API_KEY` to require a bearer token
 
 ## FastMCP client example (HTTP)
 
@@ -35,11 +37,27 @@ fastmcp_client_config = {
 }
 ```
 
+If API key auth is enabled, send the token as a Bearer header:
+
+```
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+
+async with Client(
+    transport=StreamableHttpTransport(
+        "http://localhost:8080/mcp",
+        headers={"Authorization": "Bearer YOUR_API_KEY"},
+    ),
+) as client:
+    await client.ping()
+```
+
 ## Railway deployment
 
 1) Add environment variables in Railway:
    - `BASEQL_API_ENDPOINT`
    - `BASEQL_API_KEY` (include `Bearer ` prefix)
+   - Optional: `FASTMCP_API_KEY` (or `MCP_API_KEY`) to require bearer auth
    - Optional: `MCP_PORT` (default 8080), `MCP_PATH` (default `/mcp`)
 
 2) Deploy using the provided `Dockerfile` and `Procfile` at repo root. Railway
@@ -62,6 +80,13 @@ You should see the registered tools in the response. Stop the local server once
 verified.
 
 ## Available tools
+
+## Suggested LLM flow (minimal context)
+
+1) `listTables` to discover entities.
+2) `getTableSchema` for the table you care about.
+3) `queryTable` for exact filters and pagination.
+4) `searchTable` only when you pass explicit string fields.
 
 The Python server mirrors the TypeScript toolset:
 - `listTables`

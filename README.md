@@ -46,7 +46,9 @@ That's it! The setup wizard will:
 - See `docs/fastmcp-python.md` for the Python implementation using the MCP Python SDK + FastMCP.
 - Run locally: `cd python && pip install -r requirements.txt && pip install ".[fastmcp]" && python -m baseql_mcp.http_entry`
 - Env vars: `BASEQL_API_ENDPOINT`, `BASEQL_API_KEY` (Bearer-prefixed), optional `MCP_HOST`, `MCP_PORT` (default 8080), `MCP_TRANSPORT` (`http`/`sse`/`stdio`), `MCP_PATH` (default `/mcp`).
+- Optional auth: set `FASTMCP_API_KEY` (or `MCP_API_KEY`) to require `Authorization: Bearer <token>` on requests.
 - Deploy on Railway with the included `Dockerfile`/`Procfile`; expose `8080` and point clients to `https://<host>/mcp`.
+- Minimal LLM flow: `listTables` → `getTableSchema` → `queryTable` (use `searchTable` only with explicit fields).
 
 ### Option 1: NPX (No Installation Required)
 ```bash
