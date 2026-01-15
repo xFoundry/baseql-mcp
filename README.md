@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/xfoundry-baseql-mcp-badge.png)](https://mseep.ai/app/xfoundry-baseql-mcp)
+
 # BaseQL MCP Server
 
 A Model Context Protocol (MCP) server that provides access to BaseQL GraphQL endpoints for Airtable and Google Sheets data.
